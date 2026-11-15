@@ -78,6 +78,11 @@ RUN apt update -qq && apt install -y -qq python3-pip > /dev/null && \
     pip3 install playwright --break-system-packages --quiet && \
     apt clean && rm -rf /var/lib/apt/lists/* /tmp/*
 
+# Layer 4b: Core Kali security tools (base kali-rolling ships none of these)
+RUN apt update -qq && \
+    apt install -y -qq nmap sqlmap ffuf gobuster nikto whatweb dnsutils netcat-traditional > /dev/null && \
+    apt clean && rm -rf /var/lib/apt/lists/* /tmp/*
+
 # Create non-root user BEFORE installing browser (so it goes to claude's home)
 RUN useradd -m -s /bin/bash -G sudo claude && \
     echo "claude ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
