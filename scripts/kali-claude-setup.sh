@@ -223,6 +223,20 @@ DOCKER_ARGS+=(-v "${MOUNT_SRC_SCRIPTS}:${WORKSPACE}/scripts:ro")
 # Mount the real project dir (scope files in, engagement outputs persisted out)
 DOCKER_ARGS+=(-v "${MOUNT_SRC_PROJECT}:${WORKSPACE}/projects/${PROJECT_NAME}")
 
+# Persist Claude Code's login across runs. The container is --rm and runs as the
+# 'claude' user, so its OAuth token normally dies on exit and you re-login every
+# launch. Mount a host dir as the Claude config dir (via CLAUDE_CONFIG_DIR) so the
+# login, settings, and MCP-trust approvals survive. Override the host location with
+# KALI_CLAUDE_HOME=... if you want it elsewhere.
+CLAUDE_HOME_SRC="${KALI_CLAUDE_HOME:-$HOME/.kali-claude-home}"
+mkdir -p "$CLAUDE_HOME_SRC"
+CLAUDE_HOME_MOUNT="$CLAUDE_HOME_SRC"
+case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*) CLAUDE_HOME_MOUNT="$(cygpath -m "$CLAUDE_HOME_SRC")" ;;
+esac
+DOCKER_ARGS+=(-v "${CLAUDE_HOME_MOUNT}:/home/claude/.claude-persist")
+DOCKER_ARGS+=(-e "CLAUDE_CONFIG_DIR=/home/claude/.claude-persist")
+
 # Pass .env variables as container environment variables
 if [ -f "$PROJECT_DIR_ABS/.env" ]; then
     DOCKER_ARGS+=(--env-file "$PROJECT_DIR_ABS/.env")
