@@ -166,12 +166,29 @@ echo ""
 # Build docker run arguments
 DOCKER_ARGS=()
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Mount sources default to the native paths (Linux/macOS).
+MOUNT_SRC_TEMP="$TEMP_DIR"
+MOUNT_SRC_SCRIPTS="$SCRIPT_DIR"
+
+# On Windows under Git Bash / MSYS2 / Cygwin, Docker Desktop needs Windows-style
+# source paths, and MSYS must be told not to rewrite container-internal paths
+# (e.g. /workspace, /tmp) into C:\Program Files\Git\... form.
+case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*)
+        MOUNT_SRC_TEMP="$(cygpath -m "$TEMP_DIR")"
+        MOUNT_SRC_SCRIPTS="$(cygpath -m "$SCRIPT_DIR")"
+        export MSYS_NO_PATHCONV=1
+        export MSYS2_ARG_CONV_EXCL='*'
+        ;;
+esac
+
 # Mount the entire prepared workspace (writable — Claude Code needs to write state)
-DOCKER_ARGS+=(-v "$TEMP_DIR:${WORKSPACE}")
+DOCKER_ARGS+=(-v "${MOUNT_SRC_TEMP}:${WORKSPACE}")
 
 # Mount scripts folder for debugging
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-DOCKER_ARGS+=(-v "$SCRIPT_DIR:${WORKSPACE}/scripts:ro")
+DOCKER_ARGS+=(-v "${MOUNT_SRC_SCRIPTS}:${WORKSPACE}/scripts:ro")
 
 # Pass .env variables as container environment variables
 if [ -f "$PROJECT_DIR_ABS/.env" ]; then
