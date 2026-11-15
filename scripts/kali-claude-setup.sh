@@ -112,8 +112,32 @@ trap "rm -rf $TEMP_DIR" EXIT
 
 echo "[*] Preparing project workspace..."
 
-# Copy .claude folder (skills, agents, tools, settings) — writable so Claude Code can use it
-cp -r "$PROJECT_DIR_ABS/.claude" "$TEMP_DIR/.claude"
+# Copy .claude folder (skills, agents, tools, settings) — writable so Claude Code can use it.
+# Resolve symlinks into real content. On Windows, git checks symlinks out as plain
+# text stubs (a file whose content is the relative target path) when core.symlinks is
+# off, so a plain `cp -r` would copy dead stubs and Claude Code would find no skills.
+# This walks the tree and materializes real symlinks AND Windows stubs into real files.
+build_claude_dir() {
+    local src_root="$1" dst_root="$2"
+    mkdir -p "$dst_root"
+    ( cd "$src_root" && find . -mindepth 1 ) | while IFS= read -r rel; do
+        rel="${rel#./}"
+        local src="$src_root/$rel" dst="$dst_root/$rel"
+        if [ -L "$src" ]; then
+            mkdir -p "$(dirname "$dst")"; cp -rL "$src" "$dst"
+        elif [ -d "$src" ]; then
+            mkdir -p "$dst"
+        elif [ -f "$src" ] && [ "$(wc -c < "$src")" -lt 256 ] \
+             && grep -q '/' "$src" 2>/dev/null \
+             && [ -e "$(dirname "$src")/$(tr -d '\r\n' < "$src")" ]; then
+            local tgt; tgt="$(dirname "$src")/$(tr -d '\r\n' < "$src")"
+            mkdir -p "$(dirname "$dst")"; cp -rL "$tgt" "$dst"
+        else
+            mkdir -p "$(dirname "$dst")"; cp "$src" "$dst"
+        fi
+    done
+}
+build_claude_dir "$PROJECT_DIR_ABS/.claude" "$TEMP_DIR/.claude"
 
 # Add Playwright MCP config at PROJECT ROOT (must be .mcp.json at root, NOT inside .claude/)
 cat > "$TEMP_DIR/.mcp.json" <<'MCP_EOF'
@@ -171,6 +195,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Mount sources default to the native paths (Linux/macOS).
 MOUNT_SRC_TEMP="$TEMP_DIR"
 MOUNT_SRC_SCRIPTS="$SCRIPT_DIR"
+# Real project dir: mounted so scope files (projects/<name>/<tag>-scope.md) are
+# visible inside the container AND engagement outputs persist on the host after
+# the --rm container exits. projects/ is fail-closed gitignored, so client data
+# written here never reaches git.
+MOUNT_SRC_PROJECT="$PROJECT_DIR_ABS"
 
 # On Windows under Git Bash / MSYS2 / Cygwin, Docker Desktop needs Windows-style
 # source paths, and MSYS must be told not to rewrite container-internal paths
@@ -179,6 +208,7 @@ case "$(uname -s)" in
     MINGW*|MSYS*|CYGWIN*)
         MOUNT_SRC_TEMP="$(cygpath -m "$TEMP_DIR")"
         MOUNT_SRC_SCRIPTS="$(cygpath -m "$SCRIPT_DIR")"
+        MOUNT_SRC_PROJECT="$(cygpath -m "$PROJECT_DIR_ABS")"
         export MSYS_NO_PATHCONV=1
         export MSYS2_ARG_CONV_EXCL='*'
         ;;
@@ -189,6 +219,9 @@ DOCKER_ARGS+=(-v "${MOUNT_SRC_TEMP}:${WORKSPACE}")
 
 # Mount scripts folder for debugging
 DOCKER_ARGS+=(-v "${MOUNT_SRC_SCRIPTS}:${WORKSPACE}/scripts:ro")
+
+# Mount the real project dir (scope files in, engagement outputs persisted out)
+DOCKER_ARGS+=(-v "${MOUNT_SRC_PROJECT}:${WORKSPACE}/projects/${PROJECT_NAME}")
 
 # Pass .env variables as container environment variables
 if [ -f "$PROJECT_DIR_ABS/.env" ]; then
